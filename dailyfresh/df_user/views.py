@@ -1,8 +1,13 @@
 # -*- coding:utf-8 -*-
-from django.shortcuts import render,redirect,HttpResponseRedirect
+from django.shortcuts import render,redirect
 from models import *
 from hashlib import sha1
-from django.http import HttpResponse,JsonResponse
+from django.http import JsonResponse,HttpResponseRedirect
+from . import user_decorator
+from df_goods.models import *
+from df_order.models import *
+from django.core.paginator import Paginator,Page
+
 
 # 加载注册页面
 def register(request):
@@ -66,8 +71,11 @@ def login_handle(request):
         # print users[0] #UserInfo object
         # 判断密码
         if s1.hexdigest()== users[0].upwd:
+            url = request.COOKIES.get('url', '/')
             # 登录带cookie值需构造HttpResponseRedirect对象
-            red = HttpResponseRedirect('/user/info')
+            red = HttpResponseRedirect(url)
+            # 成功后删除转向地址，防止以后直接登录造成的转向
+            red.set_cookie('url', '', max_age=-1)
             # 记住用户名
             if jizhu !=0:
                 red.set_cookie('uname',uname)
@@ -84,53 +92,54 @@ def login_handle(request):
         context = {'title':'用户登录','error_name':1,'error_pwd':0,'uname':uname}
         return render(request,'df_user/login.html',context)
 
-# 登录用户中心
-
-def info(request):
-    user_email = UserInfo.objects.get(id=request.session['user_id']).uemail
-
-
-    context = {'title': '用户中心',
-               'user_email': user_email,
-               'user_name': request.session['user_name']}
-    return render(request, 'df_user/user_center_info.html', context)
-
-
-# 订单
-def order(request):
-    context = {'title': '用户中心','page_name':1,'order':1}
-    return render(request, 'df_user/user_center_order.html', context)
-
-
-# 收货地址
-def site(request):
-    user = UserInfo.objects.get(id=request.session['user_id'])
-    if request.method == 'POST':
-        post = request.POST
-        user.ushou = post.get('ushou')
-        user.uaddress = post.get('uaddress')
-        user.uphone = post.get('uphone')
-        user.uyoubian = post.get('uyoubian')
-        user.save()
-    context = {'title': '用户中心', 'user': user,'page_name':1,'site':1}
-    return render(request, 'df_user/user_center_site.html', context)
-
-
 def logout(request):
     request.session.flush()
     return redirect('/')
 
+@user_decorator.login
+def info(request):
+    user_email=UserInfo.objects.get(id=request.session['user_id']).uemail
+    #最近浏览
+    goods_list=[]
+    goods_ids=request.COOKIES.get('goods_ids','')
+    if goods_ids!='':
+        goods_ids1=goods_ids.split(',')#['']
+        #GoodsInfo.objects.filter(id__in=goods_ids1)
+        for goods_id in goods_ids1:
+            goods_list.append(GoodsInfo.objects.get(id=int(goods_id)))
 
+    context={'title':'用户中心',
+             'user_email':user_email,
+             'user_name':request.session['user_name'],
+             'page_name':1,
+             'goods_list':goods_list}
+    return render(request,'df_user/user_center_info.html',context)
 
-def user_center_order(request):
-    """
-    此页面用户展示用户提交的订单，由购物车页面下单后转调过来，也可以从个人信息页面查看
-    根据用户订单是否支付、下单顺序进行排序
-    """
+@user_decorator.login
+def order(request,pindex):
+    order_list=OrderInfo.objects.filter(user_id=request.session['user_id']).order_by('-oid')
+    paginator=Paginator(order_list,2)
+    if pindex=='':
+        pindex='1'
+    page=paginator.page(int(pindex))
 
-    uid = request.session.get('user_id')
-    # 订单信息，根据是否支付、下单顺序进行排序
-    # 构造上下文
-    context = {'page_name': 1, 'title': '全部订单'}
-    return render(request, 'df_user/user_center_order.html', context)
+    context={'title':'用户中心',
+             'page_name':1,
+             'paginator':paginator,
+             'page':page,}
+    return render(request,'df_user/user_center_order.html',context)
+
+@user_decorator.login
+def site(request):
+    user = UserInfo.objects.get(id=request.session['user_id'])
+    if request.method=='POST':
+        post=request.POST
+        user.ushou=post.get('ushou')
+        user.uaddress=post.get('uaddress')
+        user.uyoubian=post.get('uyoubian')
+        user.uphone=post.get('uphone')
+        user.save()
+    context={'title':'用户中心','user':user,
+             'page_name':1}
+    return render(request,'df_user/user_center_site.html',context)
 
